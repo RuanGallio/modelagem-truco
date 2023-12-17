@@ -5,6 +5,7 @@ import { Card } from "./Card";
 export class Deck implements IDeck {
     public cards: ICard[] = [];
     private suitOrder: Map<string, number>;
+    private cardOrder: Map<string, number>;
     public vira: ICard;
 
     constructor() {
@@ -14,8 +15,20 @@ export class Deck implements IDeck {
             ["♥", 3],
             ["♣", 4],
         ]);
+        this.cardOrder = new Map([
+            ['4', 1],
+            ['5', 2],
+            ['6', 3],
+            ['7', 4],
+            ['Q', 5],
+            ['J', 6],
+            ['K', 7],
+            ['A', 8],
+            ['2', 9],
+            ['3', 10],
+        ]);
 
-        for (let i = 1; i <= 10; i++) {
+        for (let i of Object.keys(this.cardOrder)) {
             for (let suit of Object.keys(Suit)) {
                 this.cards.push(new Card(i, suit as Suit, false));
             }
@@ -59,10 +72,13 @@ export class Deck implements IDeck {
 
 
     compareByValue(card1: ICard, card2: ICard): number {
-        if (card1.value > card2.value) {
+        const card1Value = this.cardOrder.get(card1.value) as number;
+        const card2Value = this.cardOrder.get(card2.value) as number;
+
+        if (card1Value > card2Value) {
             return 1;
         }
-        if (card1.value < card2.value) {
+        if (card1Value < card2Value) {
             return -1;
         }
         return 0;

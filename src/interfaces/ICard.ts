@@ -2,7 +2,7 @@ import { TCard } from "../types";
 
 export interface ICard {
     isManilha: boolean;
-    value: number;
+    value: string;
     suit: string;
 
     toString(): string;
