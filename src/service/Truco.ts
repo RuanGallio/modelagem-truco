@@ -5,6 +5,8 @@ import { Player } from "./Player";
 import { TTeam } from '../types/TTeam';
 
 
+type TRoundCardsPlayed = { round: number, cards: ICard[] };
+
 export class Truco {
     private readonly MAX_POINTS = 12;
     private readonly CARDS_PER_PLAYER = 3;
@@ -12,12 +14,15 @@ export class Truco {
     private playerQueue: IPlayerQueue;
     private players: IPlayer[] = [];
     private playedCardsByRound: Map<number, ICard[]>;
+    private playedCardsByHand: Map<number, TRoundCardsPlayed>;
     private gameMode: GameMode = GameMode.DUPLA;
     private gameModePlayerNumberMap: Map<GameMode, number>;
+    private roundNumOfTruco: number = 0;
 
     public teams: TTeam[] = [];
     public round: number = 0;
-    public roundPoints: number = 1;
+    public hand: number = 0;
+    public handPoints: number = 1;
 
     constructor(deckGenerator: IDeck, playerQueue: IPlayerQueue) {
         this.gameModePlayerNumberMap = new Map<GameMode, number>([
@@ -26,6 +31,7 @@ export class Truco {
         ]);
         this.playerQueue = playerQueue;
         this.playedCardsByRound = new Map<number, ICard[]>();
+        this.playedCardsByHand = new Map<number, TRoundCardsPlayed>();
         this.deck = deckGenerator;
     }
 
@@ -61,6 +67,9 @@ export class Truco {
         }
     }
 
+    getTeamByPlayer(player: IPlayer): TTeam {
+        return this.teams.find(team => team.players.includes(player)) as TTeam;
+    }
 
     deal(): void {
         for (let i = 0; i < this.CARDS_PER_PLAYER; i++) {
@@ -73,43 +82,88 @@ export class Truco {
     }
 
     // asks if next player accepts the truco
-    truco(player: IPlayer): boolean {
+    truco(player: IPlayer, num: number): { accepted: boolean, num: number } {
         const nextPlayer = this.playerQueue.peekNextPlayer(this.playerQueue.getPlayerIndex(player));
 
-        const truco = readlineSync.keyInSelect(['Yes', 'No'], `${nextPlayer.toString()}, do you accept the truco?`, { cancel: false });
-        return truco === 0;
+        const truco = readlineSync.keyInSelect(['Yes', 'No'], `${nextPlayer.toString()}, do you accept the truco ${3 * num}x?`);
+
+
+        if (truco === 0) {
+            console.log(`${nextPlayer} accepted the truco!`);
+            num = this.truco(nextPlayer, num + 1).num
+        } else {
+            console.log(`${nextPlayer} declined the truco!`);
+        }
+
+        console.log(`Roda vale ${3 * num} pontos!`)
+        return { accepted: truco === 0, num };
     }
 
-    playersTurn(player: IPlayer, action: PlayerAction, card: ICard, num?: number): void {
-        switch (action) {
+    playersTurn(player: IPlayer): ICard | undefined {
+
+        const action = readlineSync.keyInSelect(Object.keys(PlayerAction), `${player}, what do you want to do?`, { cancel: false })
+        console.log(`You have chosen ${Object.keys(PlayerAction)[action]}`);
+
+        const actionName = Object.values(PlayerAction)[action];
+
+        const passiveActions = [PlayerAction.GET_CARDS, PlayerAction.GET_MANILHA];
+
+        if (actionName === PlayerAction.EXIT) {
+            process.exit(0);
+        }
+
+        const playerCards = player.getCardsAsString();
+        if (playerCards.length === 0) {
+            console.log(`${player} has no cards left!`);
+            return;
+        }
+
+        let card = undefined as unknown as ICard;
+        if (!passiveActions.includes(actionName)) {
+            const cardIndex = readlineSync.keyInSelect(playerCards, `${player}, what card do you want to play?`, { cancel: 'Exit' });
+            if (cardIndex === -1) {
+                process.exit(0);
+            }
+
+            card = player.cards[cardIndex];
+            console.log(`You have chosen ${card}`);
+        }
+
+        switch (actionName) {
             case PlayerAction.PLAY_CARD:
                 const playedCard = player[PlayerAction.PLAY_CARD](card);
 
-                const playedCards = this.playedCardsByRound.get(this.round) || [];
-                this.playedCardsByRound.set(this.round, [...playedCards, playedCard]);
+
+                const roundPlayedCards = this.playedCardsByRound.get(this.round) || [];
+                this.playedCardsByRound.set(this.round, [...roundPlayedCards, card]);
+                this.playedCardsByHand.set(this.hand, { round: this.round, cards: [...roundPlayedCards, playedCard] });
 
                 console.info(`${player} played ${playedCard}`);
-                break
-
+                return playedCard;
             // TODO Implementar truco de modo que: Se aceitar, aumenta o valor da rodada;
             // Se não aceitar, o time que chamou ganha 1 ponto e a rodada acaba.
             case PlayerAction.TRUCO:
-                const accepted = this.truco(player);
+                const { accepted, num } = this.truco(player, this.roundNumOfTruco || 1);
 
-
-                if (num) {
-                    this.roundPoints = num;
+                if (accepted) {
+                    this.handPoints = 3 * num;
+                    this.roundNumOfTruco = num;
+                } else {
+                    const team = this.getTeamByPlayer(player);
+                    team.points += 1;
+                    this.roundNumOfTruco = 0;
+                    return;
                 }
-
-
                 break;
 
             case PlayerAction.GET_CARDS:
                 player[PlayerAction.GET_CARDS]();
+                this.playersTurn(player);
                 break;
 
             case PlayerAction.GET_MANILHA:
                 player[PlayerAction.GET_MANILHA]();
+                this.playersTurn(player);
                 break;
 
             default:
@@ -123,9 +177,7 @@ export class Truco {
     }
 
     play(): void {
-
         this.chooseGameMode();
-
         for (let i = 0; i < 2; i++) {
             const teamName = readlineSync.question("What is your team name?");
             this.addTeam(teamName);
@@ -144,7 +196,7 @@ export class Truco {
         console.info(`The manilha is ${this.getManilha()}`);
 
         while (!this.gameOver()) {
-            this.playRound();
+            this.playHand();
         }
         console.log(`Game over! ${this.getWinner().toString()} won!`);
     }
@@ -159,41 +211,61 @@ export class Truco {
         });
     }
 
-    playRound(): void {
+
+    playHand(): void {
+        this.handPoints = 1;
+        this.playedCardsByRound.clear();
+
+        let isHandOver = false;
+        let winnerTeam: TTeam | null = null;
+
+        const team_A = this.teams[0].name
+        const team_B = this.teams[1].name
+        const handWinners = {
+            [team_A]: 0,
+            [team_B]: 0,
+        }
+
+        while (!isHandOver) {
+            const roundWinner = this.playRound();
+
+            if (!roundWinner) {
+                // add 1 point to each team so that it ends in the next round
+                handWinners[team_A] += 1;
+                handWinners[team_B] += 1;
+                continue;
+            }
+
+            const handWinnerTeam = this.getTeamByPlayer(roundWinner);
+            handWinnerTeam.points += this.handPoints;
+            handWinners[handWinnerTeam.name] += 1;
+
+            const winnerTeam = Object.values(handWinners).find(value => value === 2);
+
+            if (!!winnerTeam) {
+                isHandOver = true;
+            }
+        }
+
+        console.log(`Hand over! ${winnerTeam} won this hand!`);
+
+        this.playerQueue.rotateQueue();
+        this.deal();
+    }
+
+    playRound(): IPlayer | undefined {
         this.round++;
-        this.deck.deal();
         const cardPlayerMap = new Map<ICard, IPlayer>();
 
+        for (let player of this.playerQueue.players) {
 
-        // TODO adicionar validação para, caso algum jogador vença 2 de tres rodadas, o jogo acaba
+            const card = this.playersTurn(player);
 
-        for (let player of this.players) {
-
-            const action = readlineSync.keyInSelect(Object.keys(PlayerAction), `${player}, what do you want to do?`, { cancel: false })
-            console.log(`You have chosen ${Object.keys(PlayerAction)[action]}`);
-
-            const actionName = Object.values(PlayerAction)[action];
-
-            if (actionName === PlayerAction.EXIT) {
-                process.exit(0);
+            if (!card) {
+                continue;
             }
 
-            const playerCards = player.getCardsAsString();
-            if (playerCards.length === 0) {
-                console.log(`${player} has no cards left!`);
-                break;
-            }
-
-            const cardIndex = readlineSync.keyInSelect(playerCards, `${player}, what card do you want to play?`, { cancel: 'Exit' });
-            if (cardIndex === -1) {
-                process.exit(0);
-            }
-
-            const card = player.cards[cardIndex];
             cardPlayerMap.set(card, player);
-            console.log(`You have chosen ${card}`);
-
-            this.playersTurn(player, actionName, card);
 
             console.log(`Round ${this.round}!`);
         }
@@ -201,12 +273,19 @@ export class Truco {
         this.playerQueue.rotateQueue();
         const roundWinner = this.getRoundWinner(cardPlayerMap);
         console.log(`${roundWinner} won round ${this.round}!`);
-        roundWinner.addPoints(this.roundPoints);
+        return roundWinner
     }
 
-    getRoundWinner(cardPlayerMap: Map<any, any>): IPlayer {
+    getRoundWinner(cardPlayerMap: Map<any, any>): IPlayer | undefined {
+        console.log('=== cardPlayerMap Truco.ts [280] ===', cardPlayerMap);
         const cards = Array.from(cardPlayerMap.keys());
+        console.log('=== cards Truco.ts [281] ===', cards);
         const winnerCard = this.deck.getWinnerCard(cards);
+        console.log('=== winnerCard Truco.ts [283] ===', winnerCard);
+
+        if (!winnerCard) {
+            return;
+        }
 
         return cardPlayerMap.get(winnerCard)
     }

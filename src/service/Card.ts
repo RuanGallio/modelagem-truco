@@ -4,7 +4,7 @@ import { Suit } from "../types";
 export class Card implements ICard {
 
     constructor(
-        public value: string,
+        public value: number,
         public suit: Suit,
         public isManilha: boolean = false
     ) {
